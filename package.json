@@ -1,13 +1,11 @@
 {
-  "name": "password-to-telegram",
-  "version": "1.0.0",
+  "name": "device-remote",
+  "version": "3.0.0",
   "private": true,
-  "description": "Export password CSV → your own Telegram bot",
+  "type": "module",
+  "engines": { "node": ">=20" },
   "scripts": {
     "dev": "vercel dev",
     "deploy": "vercel --prod"
-  },
-  "engines": {
-    "node": ">=18"
   }
 }
